@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>Solution.Azure-VirtualMachine</id>
+    <version>1.0.0</version>
+    <authors>Azure Artifact</authors>
+    <description>Azure Virtual Machine deployment template and PowerShell helper.</description>
+    <releaseNotes>Initial Azure Virtual Machine solution package.</releaseNotes>
+    <tags>Azure Virtual Machine ARM PowerShell</tags>
+  </metadata>
+  <files>
+    <file src="armtemplates\avm\azuredeploy-vm.json" target="contentFiles\any\any\armtemplates\avm\azuredeploy-vm.json" />
+    <file src="scripts\deploy-vm.ps1" target="contentFiles\any\any\scripts\deploy-vm.ps1" />
+  </files>
+</package>

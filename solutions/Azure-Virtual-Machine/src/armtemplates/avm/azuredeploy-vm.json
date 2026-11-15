@@ -1,0 +1,193 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "virtualMachine": {
+      "type": "object",
+      "metadata": {
+        "description": "Virtual machine, image, and network settings."
+      }
+    },
+    "adminPassword": {
+      "type": "secureString",
+      "metadata": {
+        "description": "Local administrator password for the virtual machine."
+      }
+    },
+    "domainPassword": {
+      "type": "secureString",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Domain account password. Required only when domainJoin is enabled."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for the virtual machine resources."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    }
+  },
+  "variables": {
+    "networkApiVersion": "2023-09-01",
+    "computeApiVersion": "2023-09-01",
+    "extensionApiVersion": "2022-08-01"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "[variables('networkApiVersion')]",
+      "name": "[concat(parameters('virtualMachine').name, '-nic-', copyIndex('nicCopy', 1))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "copy": {
+        "name": "nicCopy",
+        "count": "[parameters('virtualMachine').instanceCount]"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[resourceId(parameters('virtualMachine').vnetResourceGroup, 'Microsoft.Network/virtualNetworks/subnets', parameters('virtualMachine').vnetName, parameters('virtualMachine').subnetName)]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "[variables('computeApiVersion')]",
+      "name": "[concat(parameters('virtualMachine').name, '-', copyIndex('vmCopy', 1))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "copy": {
+        "name": "vmCopy",
+        "count": "[parameters('virtualMachine').instanceCount]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('virtualMachine').name, '-nic-', copyIndex('vmCopy', 1)))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('virtualMachine').vmSize]"
+        },
+        "storageProfile": {
+          "imageReference": "[parameters('virtualMachine').imageReference]",
+          "osDisk": {
+            "createOption": "FromImage",
+            "caching": "[parameters('virtualMachine').osDisk.caching]",
+            "diskSizeGB": "[parameters('virtualMachine').osDisk.diskSizeGB]",
+            "managedDisk": {
+              "storageAccountType": "[parameters('virtualMachine').osDisk.storageAccountType]"
+            }
+          }
+        },
+        "osProfile": {
+          "computerName": "[concat(substring(parameters('virtualMachine').name, 0, min(length(parameters('virtualMachine').name), sub(15, add(length(string(copyIndex('vmCopy', 1))), 1)))), '-', string(copyIndex('vmCopy', 1)))]",
+          "adminUsername": "[parameters('virtualMachine').adminUsername]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "windowsConfiguration": "[if(parameters('virtualMachine').windowsOS, createObject('provisionVMAgent', true, 'enableAutomaticUpdates', true), json('null'))]",
+          "linuxConfiguration": "[if(parameters('virtualMachine').windowsOS, json('null'), createObject('provisionVMAgent', true, 'disablePasswordAuthentication', false))]"
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('virtualMachine').name, '-nic-', copyIndex('vmCopy', 1)))]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "condition": "[and(parameters('virtualMachine').domainJoin, parameters('virtualMachine').windowsOS)]",
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "[variables('extensionApiVersion')]",
+      "name": "[concat(parameters('virtualMachine').name, '-', copyIndex('domainJoinCopy', 1), '/joindomain')]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "domainJoinCopy",
+        "count": "[parameters('virtualMachine').instanceCount]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines', concat(parameters('virtualMachine').name, '-', copyIndex('domainJoinCopy', 1)))]"
+      ],
+      "properties": {
+        "publisher": "Microsoft.Compute",
+        "type": "JsonADDomainExtension",
+        "typeHandlerVersion": "1.3",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "Name": "[parameters('virtualMachine').domainName]",
+          "User": "[parameters('virtualMachine').domainUsername]",
+          "Restart": "true",
+          "Options": "3"
+        },
+        "protectedSettings": {
+          "Password": "[parameters('domainPassword')]"
+        }
+      }
+    },
+    {
+      "condition": "[parameters('virtualMachine').windowsOS]",
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "[variables('extensionApiVersion')]",
+      "name": "[concat(parameters('virtualMachine').name, '-', copyIndex('windowsAgentCopy', 1), '/AzureMonitorWindowsAgent')]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "windowsAgentCopy",
+        "count": "[parameters('virtualMachine').instanceCount]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines', concat(parameters('virtualMachine').name, '-', copyIndex('windowsAgentCopy', 1)))]"
+      ],
+      "properties": {
+        "publisher": "Microsoft.Azure.Monitor",
+        "type": "AzureMonitorWindowsAgent",
+        "typeHandlerVersion": "1.0",
+        "autoUpgradeMinorVersion": true,
+        "enableAutomaticUpgrade": true,
+        "settings": {}
+      }
+    },
+    {
+      "condition": "[not(parameters('virtualMachine').windowsOS)]",
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "[variables('extensionApiVersion')]",
+      "name": "[concat(parameters('virtualMachine').name, '-', copyIndex('linuxAgentCopy', 1), '/AzureMonitorLinuxAgent')]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "linuxAgentCopy",
+        "count": "[parameters('virtualMachine').instanceCount]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines', concat(parameters('virtualMachine').name, '-', copyIndex('linuxAgentCopy', 1)))]"
+      ],
+      "properties": {
+        "publisher": "Microsoft.Azure.Monitor",
+        "type": "AzureMonitorLinuxAgent",
+        "typeHandlerVersion": "1.21",
+        "autoUpgradeMinorVersion": true,
+        "enableAutomaticUpgrade": true,
+        "settings": {}
+      }
+    }
+  ],
+  "outputs": {
+    "virtualMachineNames": {
+      "type": "array",
+      "copy": {
+        "count": "[parameters('virtualMachine').instanceCount]",
+        "input": "[concat(parameters('virtualMachine').name, '-', copyIndex(1))]"
+      }
+    }
+  }
+}
